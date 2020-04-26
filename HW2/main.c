@@ -8,8 +8,9 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <resolv.h>
-#include "openssl/ssl.h"
-#include "openssl/err.h"
+#include <netdb.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #define FAIL    -1
 
@@ -85,6 +86,35 @@ void LoadCertificates(SSL_CTX* ctx, char* CertFile, char* KeyFile)
     }
 }
 
+void VerifyingCert(SSL* ssl, X509* cert)
+{
+    // init CertStore
+    X509_STORE* m_store = X509_STORE_new();
+    X509_LOOKUP* m_lookup = X509_STORE_add_lookup(m_store,X509_LOOKUP_file());
+    X509_STORE_load_locations(m_store, "client.crt", NULL);
+    X509_STORE_set_default_paths(m_store);
+    X509_LOOKUP_load_file(m_lookup,"client.crt",X509_FILETYPE_PEM);
+    // VerifyCert
+    X509_STORE_CTX *storeCtx = X509_STORE_CTX_new();
+    X509_STORE_CTX_init(storeCtx,m_store,cert,NULL);
+    X509_STORE_CTX_set_flags(storeCtx, X509_V_FLAG_CB_ISSUER_CHECK);
+    if (X509_verify_cert(storeCtx) == 1)
+    {
+      printf("Verification Successful\n");
+    }
+    else
+    {
+      printf("Verification Error: %s\n",X509_verify_cert_error_string(storeCtx->error));
+    }
+    X509_STORE_CTX_free(storeCtx);
+    // Clean m_store
+    if(m_store != NULL)
+    {
+       X509_STORE_free(m_store);
+       m_store = NULL;
+    }
+}
+
 void ShowCerts(SSL* ssl)
 {   X509 *cert;
     char *line;
@@ -92,6 +122,8 @@ void ShowCerts(SSL* ssl)
     cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
     if ( cert != NULL )
     {
+        printf("Verifying\n");
+        VerifyingCert(ssl, cert);
         printf("Server certificates:\n");
         line = X509_NAME_oneline(X509_get_subject_name(cert), 0, 0);
         printf("Subject: %s\n", line);
@@ -105,11 +137,11 @@ void ShowCerts(SSL* ssl)
         printf("No certificates.\n");
 }
 
-void Servlet(SSL* ssl) /* Serve the connection -- threadable */
+void Servlet(SSL* ssl, SSL_CTX* ctx) /* Serve the connection -- threadable */
 {   char buf[1024];
     char reply[1024];
     int sd, bytes;
-    const char* echo="%s\n\n";
+    const char* echo="Client Msg Recieved";
 
     if ( SSL_accept(ssl) == FAIL )     /* do SSL-protocol accept */
         ERR_print_errors_fp(stderr);
@@ -121,8 +153,8 @@ void Servlet(SSL* ssl) /* Serve the connection -- threadable */
         {
             buf[bytes] = 0;
             printf("Client msg: \"%s\"\n", buf);
-            sprintf(reply, echo, buf);   /* construct reply */
-            SSL_write(ssl, reply, strlen(reply)); /* send reply */
+            // sprintf(reply, echo, buf);   /* construct reply */
+            SSL_write(ssl, echo, strlen(echo)); /* send reply */
         }
         else
             ERR_print_errors_fp(stderr);
@@ -132,7 +164,7 @@ void Servlet(SSL* ssl) /* Serve the connection -- threadable */
     close(sd);          /* close connection */
 }
 
-int main(int count, char *strings[])
+int main(int argc, char *argv[])
 {   SSL_CTX *ctx;
     int server;
     char *portnum;
@@ -142,27 +174,27 @@ int main(int count, char *strings[])
         printf("This program must be run as root/sudo user!!");
         exit(0);
     }
-    if ( count != 2 )
+    if ( argc != 2 )
     {
-        printf("Usage: %s <portnum>\n", strings[0]);
+        printf("Usage: %s <portnum>\n", argv[0]);
         exit(0);
     }
     SSL_library_init();
-
-    portnum = strings[1];
+    portnum = argv[1];
     ctx = InitServerCTX();        /* initialize SSL */
-    LoadCertificates(ctx, "mycert.pem", "mycert.pem"); /* load certs */
+    LoadCertificates(ctx, "server.crt", "server.key"); /* load certs */
     server = OpenListener(atoi(portnum));    /* create server socket */
+    // SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     while (1)
-    {   struct sockaddr_in addr;
+    {
+        struct sockaddr_in addr;
         socklen_t len = sizeof(addr);
         SSL *ssl;
-
         int client = accept(server, (struct sockaddr*)&addr, &len);  /* accept connection as usual */
         printf("Connection: %s:%d\n",inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
         ssl = SSL_new(ctx);              /* get new SSL state with context */
         SSL_set_fd(ssl, client);      /* set connection socket to SSL state */
-        Servlet(ssl);         /* service connection */
+        Servlet(ssl, ctx);         /* service connection */
     }
     close(server);          /* close server socket */
     SSL_CTX_free(ctx);         /* release context */

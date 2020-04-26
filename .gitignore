@@ -3,6 +3,12 @@ gnore Visual Studio temporary files, build results, and
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+## Key File
+*.crt
+*.csr
+*.key
+*.srl
+
 ## My folder
 CGI_example-master/
 post_test/
