@@ -1,5 +1,6 @@
 //SSL-Client.c
 #include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
 #include <malloc.h>
@@ -74,42 +75,12 @@ void LoadCertificates(SSL_CTX* ctx, char* CertFile, char* KeyFile)
     }
 }
 
-void VerifyingCert(SSL* ssl, X509* cert)
-{
-    // init CertStore
-    X509_STORE* m_store = X509_STORE_new();
-    X509_LOOKUP* m_lookup = X509_STORE_add_lookup(m_store,X509_LOOKUP_file());
-    X509_STORE_load_locations(m_store, "server.crt", NULL);
-    X509_STORE_set_default_paths(m_store);
-    X509_LOOKUP_load_file(m_lookup,"server.crt",X509_FILETYPE_PEM);
-    // VerifyCert
-    X509_STORE_CTX *storeCtx = X509_STORE_CTX_new();
-    X509_STORE_CTX_init(storeCtx,m_store,cert,NULL);
-    X509_STORE_CTX_set_flags(storeCtx, X509_V_FLAG_CB_ISSUER_CHECK);
-    if (X509_verify_cert(storeCtx) == 1)
-    {
-      printf("Verification Successful\n");
-    }
-    else
-    {
-      printf("Verification Error: %s\n",X509_verify_cert_error_string(storeCtx->error));
-    }
-    X509_STORE_CTX_free(storeCtx);
-    // Clean m_store
-    if(m_store != NULL)
-    {
-       X509_STORE_free(m_store);
-       m_store = NULL;
-    }
-}
-
-void ShowCerts(SSL* ssl)
+void ShowCerts(SSL* ssl, SSL_CTX *ctx)
 {   X509 *cert;
     char *line;
     cert = SSL_get_peer_certificate(ssl); /* get the server's certificate */
     if ( cert != NULL )
     {
-        VerifyingCert(ssl, cert);
         printf("Server certificates:\n");
         line = X509_NAME_oneline(X509_get_subject_name(cert), 0, 0);
         printf("Subject: %s\n", line);
@@ -124,14 +95,14 @@ void ShowCerts(SSL* ssl)
 }
 
 int main(int argc, char *argv[])
-{   SSL_CTX *ctx;
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    SSL_CTX *ctx;
     int server;
     SSL *ssl;
-    char buf[1024];
+    char buf[4096] = "";
     int bytes;
     char *hostname, *portnum;
-
-    setvbuf(stdout, NULL, _IONBF, 0);
 
     if ( argc != 3 )
     {
@@ -143,24 +114,74 @@ int main(int argc, char *argv[])
     portnum=argv[2];
     ctx = InitCTX();
     LoadCertificates(ctx, "client.crt", "client.key"); /* load certs */
-    char *msg;
-    server = OpenConnection(hostname, atoi(portnum));
-    ssl = SSL_new(ctx);      /* create new SSL connection state */
-    SSL_set_fd(ssl, server);    /* attach the socket descriptor */
-    // SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-    if ( SSL_connect(ssl) == FAIL )   /* perform the connection */
-        ERR_print_errors_fp(stderr);
-    else
-    {   
-        printf("Connected with %s encryption\n", SSL_get_cipher(ssl));
-        ShowCerts(ssl);        /* get any certs */
-        /* Communication */
-        printf("Input Your message that you want to send below\n");
-        scanf("%s", msg);
-        SSL_write(ssl, msg, strlen(msg));   /* encrypt & send message */
-        bytes = SSL_read(ssl, buf, sizeof(buf)); /* get reply & decrypt */
-        buf[bytes] = 0;
-        printf("Received: \"%s\"\n", buf);
+    while(1)
+    {
+        server = OpenConnection(hostname, atoi(portnum));
+        ssl = SSL_new(ctx);      /* create new SSL connection state */
+        SSL_set_fd(ssl, server);    /* attach the socket descriptor */
+        if ( SSL_connect(ssl) == FAIL )   /* perform the connection */
+        {
+            ERR_print_errors_fp(stderr);
+            exit(0);
+        }
+        else
+        {   
+            printf("\nConnected with %s encryption\n", SSL_get_cipher(ssl));
+            if(SSL_connect(ssl) == 1)
+            {
+                char msg[1024];
+                ShowCerts(ssl, ctx); /* get any certs */
+                /* Simple Shell */
+                printf("Input Your shell command below :\n");
+                fgets(msg, 1024, stdin);
+                SSL_write(ssl, msg, strlen(msg));   /* encrypt & send message */
+                // check recieve message
+                int flag, copy;
+                char *fileName;
+                char *cpy;
+                flag = copy = 0;
+                char *ptr = strtok(msg, " ");
+                while(ptr != NULL)
+                {
+                    flag += 1;
+                    if(flag == 1 && strcmp(ptr, "cp") == 0) copy = 1;
+                    if(flag == 2 && copy == 1){
+                        fileName = malloc(sizeof(char) * strlen(ptr));
+                        strcpy(fileName, ptr);
+                    }                
+                    ptr = strtok(NULL, " ");
+                }
+                free(ptr);
+                bytes = SSL_read(ssl, buf, sizeof(buf)); /* get reply & decrypt */
+                buf[bytes] = 0;
+                if(flag == 2 && copy)
+                {
+                    /* File Copy */
+                    cpy = malloc(sizeof(char) * (strlen(fileName) + 5));
+                    strcpy(cpy, "copy_");
+                    printf("filena = %s\n", cpy);
+                    strcat(cpy, fileName); // Create new fileName
+                    cpy = strtok(cpy, "\n");
+                    printf("file name = \"%s\"\n", cpy); // debug
+                    FILE *output;
+                    output = fopen(cpy, "w+b");
+                    fwrite(buf, strlen(buf), 1, output);
+                    fclose(output);
+                    printf("Copy Done !\n");
+                }
+                else
+                {
+                    printf("%s\n", buf);
+                }
+                
+            }
+            else
+            {
+                ERR_print_errors_fp(stderr);
+                printf("ShutDown Control\n");
+                exit(0);
+            }
+        }
         SSL_free(ssl);        /* release connection state */
     }
     close(server);         /* close socket */

@@ -1,4 +1,6 @@
 //SSL-Server.c
+#include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
 #include <malloc.h>
@@ -12,7 +14,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#define FAIL    -1
+#define FAIL -1
 
 int OpenListener(int port)
 {   int sd;
@@ -86,35 +88,6 @@ void LoadCertificates(SSL_CTX* ctx, char* CertFile, char* KeyFile)
     }
 }
 
-void VerifyingCert(SSL* ssl, X509* cert)
-{
-    // init CertStore
-    X509_STORE* m_store = X509_STORE_new();
-    X509_LOOKUP* m_lookup = X509_STORE_add_lookup(m_store,X509_LOOKUP_file());
-    X509_STORE_load_locations(m_store, "client.crt", NULL);
-    X509_STORE_set_default_paths(m_store);
-    X509_LOOKUP_load_file(m_lookup,"client.crt",X509_FILETYPE_PEM);
-    // VerifyCert
-    X509_STORE_CTX *storeCtx = X509_STORE_CTX_new();
-    X509_STORE_CTX_init(storeCtx,m_store,cert,NULL);
-    X509_STORE_CTX_set_flags(storeCtx, X509_V_FLAG_CB_ISSUER_CHECK);
-    if (X509_verify_cert(storeCtx) == 1)
-    {
-      printf("Verification Successful\n");
-    }
-    else
-    {
-      printf("Verification Error: %s\n",X509_verify_cert_error_string(storeCtx->error));
-    }
-    X509_STORE_CTX_free(storeCtx);
-    // Clean m_store
-    if(m_store != NULL)
-    {
-       X509_STORE_free(m_store);
-       m_store = NULL;
-    }
-}
-
 void ShowCerts(SSL* ssl)
 {   X509 *cert;
     char *line;
@@ -122,8 +95,6 @@ void ShowCerts(SSL* ssl)
     cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
     if ( cert != NULL )
     {
-        printf("Verifying\n");
-        VerifyingCert(ssl, cert);
         printf("Server certificates:\n");
         line = X509_NAME_oneline(X509_get_subject_name(cert), 0, 0);
         printf("Subject: %s\n", line);
@@ -139,22 +110,88 @@ void ShowCerts(SSL* ssl)
 
 void Servlet(SSL* ssl, SSL_CTX* ctx) /* Serve the connection -- threadable */
 {   char buf[1024];
-    char reply[1024];
     int sd, bytes;
-    const char* echo="Client Msg Recieved";
+    char *FileNotFound = "File Not Found !";
+    char *ErrorCommand = "Error Command or element !";
 
     if ( SSL_accept(ssl) == FAIL )     /* do SSL-protocol accept */
+    {
         ERR_print_errors_fp(stderr);
+        printf("handshake failed\n");
+        exit(0);
+    }
     else
     {
+        if(SSL_accept(ssl) == 1) printf("Handshake Successful\n");
+        else printf("Shutdown Controll\n");
         ShowCerts(ssl);        /* get any certificates */
         bytes = SSL_read(ssl, buf, sizeof(buf)); /* get request */
         if ( bytes > 0 )
         {
             buf[bytes] = 0;
             printf("Client msg: \"%s\"\n", buf);
-            // sprintf(reply, echo, buf);   /* construct reply */
-            SSL_write(ssl, echo, strlen(echo)); /* send reply */
+            char buf_temp[1024];
+            strcpy(buf_temp, buf);
+            char *fileName = NULL;
+            char reply[5120] = "";
+            char temp[2048] = "";
+            int flag, copy;
+            flag = copy = 0;
+            char *ptr = strtok(buf_temp, " ");
+            while(ptr != NULL)
+            {
+                flag += 1;
+                if(flag == 1 && strcmp(ptr, "cp") == 0) copy = 1;
+                if(flag == 2 && copy == 1){ // Save file name
+                    fileName = malloc(sizeof(char) * strlen(ptr));
+                    strcpy(fileName, ptr);
+                }                
+                ptr = strtok(NULL, " ");
+            }
+            free(ptr);
+            FILE *fp;
+            if(flag == 2 && copy)
+            {
+                // Deal with fileName with newline at end
+                fileName = strtok(fileName, "\n");
+                /* File Copy */
+                printf("FileName = \"%s\"\n", fileName); // debug
+                fp = fopen(fileName, "rb"); // read binary
+                if(fp == NULL)
+                {
+                    SSL_write(ssl, FileNotFound, strlen(FileNotFound)); // file not found
+                    printf("%s\n", FileNotFound);
+                }
+                else
+                {
+                    long filelen;
+                    char *buffer = NULL;
+                    printf("Reading File\n"); // debug
+                    fseek(fp, 0, SEEK_END); // Jump to the end of file
+                    filelen = ftell(fp); // Get current byte offset in the file
+                    rewind(fp); // Jump back to the beginning of the file
+                    buffer = (char *)malloc(filelen * sizeof(char));
+                    fread(buffer, filelen, 1, fp); // read entire file
+                    SSL_write(ssl, buffer, strlen(buffer)); // send file to client
+                    printf("File Context = \"%s\"\n", buffer); // debug
+                    free(buffer);
+                }
+                fclose(fp);
+            }
+            else
+            {
+                printf("system command : \"%s\"\n", strtok(buf, "\n")); // debug
+                /* Simple Shell */
+                fp = popen(buf, "r"); /* open the command for reading */
+                while(fgets(temp, sizeof(temp) -1, fp) != NULL)
+                {
+                    strcat(reply, temp);
+                }
+                pclose(fp);
+                SSL_write(ssl, reply, strlen(reply)); // reply to client
+                if(system(buf) < 0) SSL_write(ssl, ErrorCommand, strlen(ErrorCommand));
+            }
+            free(fileName);
         }
         else
             ERR_print_errors_fp(stderr);
@@ -183,8 +220,10 @@ int main(int argc, char *argv[])
     portnum = argv[1];
     ctx = InitServerCTX();        /* initialize SSL */
     LoadCertificates(ctx, "server.crt", "server.key"); /* load certs */
+    SSL_CTX_load_verify_locations(ctx, "ca.crt", NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL );
+    SSL_CTX_set_verify_depth(ctx, 1);
     server = OpenListener(atoi(portnum));    /* create server socket */
-    // SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     while (1)
     {
         struct sockaddr_in addr;
