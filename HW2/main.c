@@ -48,7 +48,6 @@ int isRoot()
     {
         return 1;
     }
-
 }
 SSL_CTX* InitServerCTX(void)
 {   SSL_METHOD *method;
@@ -122,7 +121,7 @@ void Servlet(SSL* ssl, SSL_CTX* ctx) /* Serve the connection -- threadable */
     }
     else
     {
-        if(SSL_accept(ssl) == 1) printf("Handshake Successful\n");
+        if(SSL_accept(ssl) == 1) printf("\nConnected with %s encryption\n", SSL_get_cipher(ssl));
         else printf("Shutdown Controll\n");
         ShowCerts(ssl);        /* get any certificates */
         bytes = SSL_read(ssl, buf, sizeof(buf)); /* get request */
