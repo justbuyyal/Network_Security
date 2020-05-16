@@ -1,5 +1,4 @@
 # 網路安全 Homework 2
-[TOC]
 * B10615026
 ## TLS/SSL Server and Client
 ---
