@@ -72,7 +72,6 @@ SSL_CTX* InitServerCTX(void)
         perror("SSL create failed");
         exit(EXIT_FAILURE);
     }
-    // SSL_CTX_load_verify_locations(ctx, "ca.crt", NULL);
     SSL_library_init();
     return ctx;
 }
