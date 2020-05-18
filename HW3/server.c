@@ -130,58 +130,67 @@ void ShowCerts(SSL* c_ssl) // show client certificates
 void handleHttps(int c_fd, SSL* c_ssl)
 {
     char buf[BUFFER];
+    char out_buf[BUFFER];
     int bytes = SSL_read(c_ssl, buf, BUFFER); // get request
     if(bytes > 0)
     {
         buf[bytes] = 0;
         printf("client msg = \"%s\"\n", buf);
-        // handling web request
-        pid_t pid;
-        int status;
-        int cgiInput[2], cgiOutput[2];
-        if(pipe(cgiInput) < 0)  perror("pipe error");
-        if(pipe(cgiOutput) < 0) perror("pipe error");
-        if((pid = fork()) < 0)
+        // handling web requestxecute cgi program
+        if(strncmp(buf, "GET / ", 6) == 0)
         {
-            perror("fork error");
-            exit(EXIT_FAILURE);
+            SSL_write(c_ssl, Response, strlen(Response));
+            // sending web page information
+            SSL_write(c_ssl, webPage, strlen(webPage));
         }
-        if(pid == 0) // child process
+        else if(strncmp(buf,"GET /view ", 10) == 0)
         {
-            printf("child process\n");
-            // close unused fd
-            close(cgiInput[1]);
-            close(cgiOutput[0]);
-            printf("before redir\n");
-            // redirect the input from stdin to cgiInput
-            // dup2(cgiInput[0], STDIN_FILENO);
-            // redirect the output from stdout to cgiOutput
-            // dup2(cgiOutput[1], STDOUT_FILENO);
-            printf("after redir\n");
-            // after redirect we don't need the old fd
-            close(cgiInput[0]);
-            close(cgiOutput[1]);
-            
-            // execute cgi program
-            if(strncmp(buf, "GET / ", 6) == 0)
+            SSL_write(c_ssl, Response, strlen(Response));
+            FILE *file_list;
+            SSL_write(c_ssl, viewPage_1, strlen(viewPage_1));
+            SSL_write(c_ssl, copy, strlen(copy));
+            // view list of file from server
+            file_list = popen("ls -a", "r"); // system call
+            while(fgets(out_buf, sizeof(out_buf), file_list))
             {
-                // sending web page information
-                SSL_write(c_ssl, Response, strlen(Response));
-                SSL_write(c_ssl, webPage, strlen(webPage));
+                SSL_write(c_ssl, out_buf, strlen(out_buf));
+                SSL_write(c_ssl, "<br>", 4);
             }
-            else if(strncmp(buf,"GET /view.cgi", 13) == 0)
-            {
-                SSL_write(c_ssl, Response, strlen(Response));
-                SSL_write(c_ssl, viewPage_1, strlen(viewPage_1));
-                SSL_write(c_ssl, "123456", 6);
-                SSL_write(c_ssl, viewPage_2, strlen(viewPage_2));
-            }
-            close(c_fd);
+            SSL_write(c_ssl, out_buf, strlen(out_buf));
+            SSL_write(c_ssl, viewPage_2, strlen(viewPage_2));
+            fclose(file_list);
         }
-        else
+        else if((strncmp(buf, "POST ", 5) == 0)) // copy file POST get file name
         {
-            printf("parent process\n");
-            waitpid(pid, &status, 0);
+            char *file_name;
+            // dealing with file name
+            file_name = strstr(buf, "Name=");
+            file_name = file_name + 5;
+            printf("Input File Name = \"%s\"\n", file_name);
+            FILE* fp;
+            fp = fopen(file_name, "rb");
+            if(fp == NULL)
+            {
+                SSL_write(c_ssl, Response, strlen(Response));
+                SSL_write(c_ssl, file_not_found, strlen(file_not_found));
+            }
+            char *copy_buf = NULL;
+            long filelen;
+            fseek(fp, 0, SEEK_END); // Jump to the end of file
+            filelen = ftell(fp); // Get current byte offset in the file
+            rewind(fp); // Jump back to the beginning of the file
+            copy_buf = (char *)malloc(filelen * sizeof(char));
+            fread(copy_buf, filelen, 1, fp); // read entire file
+            SSL_write(c_ssl, copy_buf, filelen); // send file to client
+            printf("File Copy Complete !\n");
+            free(copy_buf);
+            fclose(fp);
+        }
+        else // wrong GET url
+        {
+            SSL_write(c_ssl, Response, strlen(Response));
+            SSL_write(c_ssl, wrong_page, strlen(wrong_page));
+            printf("Wrong Page access\n");
         }
         
     }
@@ -191,6 +200,7 @@ int main(int argc, char** argv)
     int fd;
     SSL_CTX *ctx;
     setvbuf(stdout, NULL, _IONBF, 0);
+    // server using root
     if(!isRoot())
     {
         printf("This program must be run as root/sudo user!!\n");
@@ -207,7 +217,6 @@ int main(int argc, char** argv)
         struct sockaddr_in client_addr;
         socklen_t c_addr_len = sizeof(client_addr);
         pid_t pid;
-        int status;
         
         // create client socket connection
         client_fd = Accept(fd, (struct sockaddr *)&client_addr, &c_addr_len);
@@ -216,30 +225,36 @@ int main(int argc, char** argv)
             perror("client socket accept error");
             exit(EXIT_FAILURE);
         }
-        SSL* ssl;
-        ssl = ssl_create_connection(client_fd, ctx);
-        int ac = SSL_accept(ssl);
-        printf("ac = %d\n", ac);
-        if(ac <= 0)
+        if((pid = fork()) < 0)
         {
-            if(SSL_get_verify_result(ssl) != X509_V_OK)
+            perror("fork error");
+            exit(EXIT_FAILURE);
+        }
+        if(pid == 0) // child process
+        {
+            SSL* ssl;
+            ssl = ssl_create_connection(client_fd, ctx);
+            int ac = SSL_accept(ssl);
+            printf("ac = %d\n", ac);
+            if(ac <= 0)
             {
-                perror("client verification failed");
+                if(SSL_get_verify_result(ssl) != X509_V_OK)
+                    perror("client verification failed");
+                else
+                    perror("unexpected accept error");
                 exit(EXIT_FAILURE);
             }
             else
-                perror("unexpected accept error");
+            {
+                printf("SSL accept\n");
+                printf("Connected with %s encryption\n", SSL_get_cipher(ssl));
+                ShowCerts(ssl);
+                // handle request
+                handleHttps(client_fd, ssl);
+            }
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
         }
-        else
-        {
-            printf("SSL accept\n");
-            printf("Connected with %s encryption\n", SSL_get_cipher(ssl));
-            ShowCerts(ssl);
-            // handle request
-            handleHttps(client_fd, ssl);
-        }
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
         close(client_fd);
     }
     close(fd);
