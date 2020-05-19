@@ -27,3 +27,11 @@ char file_not_found[] =
 
 char wrong_page[] =
 "<html><head><title>Wrong webpage</title></head><body><h1>404 Not Found</h1></body></html>";
+
+char download_1[] =
+"<!DOCTYPE html><html><body><h1>Here is Your File</h1>"
+"<p>Click to Download<p>"
+"<a href='/Download/";
+
+char download_2[] =
+"' download>";

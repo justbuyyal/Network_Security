@@ -134,17 +134,16 @@ void handleHttps(int c_fd, SSL* c_ssl)
     if(bytes > 0)
     {
         buf[bytes] = 0;
-        printf("client msg = \"%s\"\n", buf);
+        SSL_write(c_ssl, Response, strlen(Response));
+        printf("------------------------------------------\nclient msg = \"%s\"\n", buf); // debug
         // handling web requestxecute cgi program
         if(strncmp(buf, "GET / ", 6) == 0)
         {
-            SSL_write(c_ssl, Response, strlen(Response));
             // sending web page information
             SSL_write(c_ssl, webPage, strlen(webPage));
         }
         else if(strncmp(buf,"GET /view ", 10) == 0)
         {
-            SSL_write(c_ssl, Response, strlen(Response));
             FILE *file_list;
             SSL_write(c_ssl, viewPage_1, strlen(viewPage_1));
             SSL_write(c_ssl, copy, strlen(copy));
@@ -159,20 +158,44 @@ void handleHttps(int c_fd, SSL* c_ssl)
             SSL_write(c_ssl, viewPage_2, strlen(viewPage_2));
             fclose(file_list);
         }
-        else if((strncmp(buf, "POST ", 5) == 0)) // copy file POST get file name
+        else if((strncmp(buf, "POST ", 5) == 0)) // file POST get file name
         {
             char *file_name;
             // dealing with file name
             file_name = strstr(buf, "Name=");
             file_name = file_name + 5;
-            printf("Input File Name = \"%s\"\n", file_name);
+            printf("Input File Name = \"%s\"\n", file_name); // debug
             FILE* fp;
             fp = fopen(file_name, "rb");
             if(fp == NULL)
             {
-                SSL_write(c_ssl, Response, strlen(Response));
                 SSL_write(c_ssl, file_not_found, strlen(file_not_found));
             }
+            else
+            {
+                // show a download link
+                SSL_write(c_ssl, download_1, strlen(download_1));
+                SSL_write(c_ssl, file_name, strlen(file_name));
+                SSL_write(c_ssl, download_2, strlen(download_2));
+                SSL_write(c_ssl, file_name, strlen(file_name));
+                SSL_write(c_ssl, "</a></body></html>", strlen("</a></body></html>"));
+            }
+            fclose(fp);
+        }
+        else if((strncmp(buf, "GET /Download/", 14) == 0)) // Real file copy and download
+        {
+            // dealing file name and get it
+            char *real_file_name;
+            real_file_name = strstr(buf, "Download/");
+            real_file_name = real_file_name + 9;
+            int flag = 0;
+            while(real_file_name[flag] != ' ')
+            {
+                flag++;
+            }
+            real_file_name[flag] = 0;
+            FILE* fp;
+            fp = fopen(real_file_name, "rb");
             char *copy_buf = NULL;
             long filelen;
             fseek(fp, 0, SEEK_END); // Jump to the end of file
@@ -180,18 +203,17 @@ void handleHttps(int c_fd, SSL* c_ssl)
             rewind(fp); // Jump back to the beginning of the file
             copy_buf = (char *)malloc(filelen * sizeof(char));
             fread(copy_buf, filelen, 1, fp); // read entire file
-            SSL_write(c_ssl, copy_buf, filelen); // send file to client
-            printf("File Copy Complete !\n");
+            SSL_write(c_ssl, copy_buf, filelen); // send copied file
             free(copy_buf);
             fclose(fp);
+            printf("File Copy Complete !\n");
         }
         else // wrong GET url
         {
-            SSL_write(c_ssl, Response, strlen(Response));
             SSL_write(c_ssl, wrong_page, strlen(wrong_page));
             printf("Wrong Page access\n");
         }
-        
+        printf("------------------------------------------\n\n");
     }
 }
 int main(int argc, char** argv)
