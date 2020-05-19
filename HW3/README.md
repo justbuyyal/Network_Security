@@ -57,7 +57,11 @@ else if(strncmp(buf,"GET /view ", 10) == 0)
 {
     ...
 }
-else if((strncmp(buf, "POST ", 5) == 0)) // copy file POST get file name
+else if((strncmp(buf, "POST ", 5) == 0)) // file POST get file name
+{
+    ...
+}
+else if((strncmp(buf, "GET /Download/", 14) == 0)) // Real file copy and download
 {
     ...
 }
@@ -66,7 +70,7 @@ else // wrong GET url
     ...
 }
 ```
-* **處理從網頁接到的Request並回應相對應的要求給client, 像是/view 顯示目前server當下所有資料提供client選取複製資料, POST則處理尋找client要求資料並複製顯示在網頁**
+* **處理從網頁接到的Request並回應相對應的要求給client, 像是/view 顯示目前server當下所有資料提供client選取複製資料, POST則處理尋找client要求資料名稱並產生超連結提供client下載, 下載資料傳遞部分交由 GET /Download/執行。**
 * **更詳細的內容都在程式中的註解**
 ---
 ### 設計架構與功能說明
@@ -88,7 +92,8 @@ else // wrong GET url
 2. 顯示清單
 ![](https://i.imgur.com/fCola8O.png)
 3. copy file(ex. Makefile)
-![](https://i.imgur.com/pUGz5MV.png)
+![](https://i.imgur.com/0nxB6DH.png)
+![](https://i.imgur.com/gPHBig3.png)
 4. wrong page
 ![](https://i.imgur.com/nX6XN9e.png)
 ---
